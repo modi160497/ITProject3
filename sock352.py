@@ -55,8 +55,9 @@ PACKET_HEADER_LENGTH = struct.calcsize(PACKET_HEADER_FORMAT)
 
 # Global variables that are responsible for storing the maximum packet size and the
 # maximum payload size
-MAXIMUM_PACKET_SIZE = 64000
+MAXIMUM_PACKET_SIZE = 4096
 MAXIMUM_PAYLOAD_SIZE = MAXIMUM_PACKET_SIZE - PACKET_HEADER_LENGTH
+MAX_WINDOW = 32000
 
 # Global variables that define all the packet bits
 SOCK352_SYN = 0x01
@@ -646,7 +647,7 @@ class socket:
 
     # method responsible for receiving acks for the data packets the sender sends
     def recv_acks(self):
-        # tries to receive the ack as long as the connection has is not ready to be closed
+        # tries to receive the ack as long as the connection is not ready to be closed
         # this can only happen when the sender receives a Connection refused error
         while not self.can_close:
             # tries to receive the new packet and un-pack it
@@ -696,10 +697,14 @@ class socket:
         # also declares a variable to hold all the string of the data that has been received
         data_received = ""
 
+        updated_window = MAX_WINDOW
+
         print("Started receiving data packets...")
         # keep trying to receive packets until the receiver has more bytes left to receive
         while bytes_to_receive > 0:
             # tries to receive the packet
+            if(updated_window==0):
+                updated_window = MAX_WINDOW
             try:
                 # receives the packet of header + maximum data size bytes (although it will be limited
                 # by the sender on the other side)
@@ -707,10 +712,13 @@ class socket:
                     #add 40 bytes for the encryption information
                     packet_received = self.socket.recv(PACKET_HEADER_LENGTH + bytes_to_receive + 40)
                 else:
+                    print("current window: " + str(updated_window))
                     packet_received = self.socket.recv(PACKET_HEADER_LENGTH + bytes_to_receive)
+                    updated_window = updated_window - MAXIMUM_PACKET_SIZE
+                    print("after recieving packet, the window: " + updated_window)
 
                 # sends the packet to another method to manage it and gets back the data in return
-                str_received = self.manage_recvd_data_packet(packet_received)
+                str_received = self.manage_recvd_data_packet(packet_received, updated_window)
 
                 # adjusts the numbers accordingly based on return value of manage data packet
                 if str_received is not None:
@@ -733,7 +741,7 @@ class socket:
         # creates a generic packet to be sent using parameters that are
         # relevant to Part 1. The default values are specified above in case one or more parameters are not used
 
-    def createPacket(self, flags=0x0, sequence_no=0x0, ack_no=0x0, payload_len=0x0):
+    def createPacket(self, flags=0x0, sequence_no=0x0, ack_no=0x0, payload_len=0x0, window=0x0):
         return struct.Struct(PACKET_HEADER_FORMAT).pack \
                 (
                 0x1,  # version
@@ -746,13 +754,13 @@ class socket:
                 0x0,  # dest_port
                 sequence_no,  # sequence_no
                 ack_no,  # ack_no
-                0x0,  # window
+                window,  # window
                 payload_len  # payload_len
             )
 
         # Manages a packet received based on the flag
 
-    def manage_recvd_data_packet(self, packet):
+    def manage_recvd_data_packet(self, packet, window):
         packet_header = packet[:PACKET_HEADER_LENGTH]
         packet_data = packet[PACKET_HEADER_LENGTH:]
         packet_header = struct.unpack(PACKET_HEADER_FORMAT, packet_header)
@@ -775,7 +783,8 @@ class socket:
         # finally, it creates the ACK packet using the server's current sequence and ack numbers
         ack_packet = self.createPacket(flags=SOCK352_ACK,
                                        sequence_no=self.sequence_no,
-                                       ack_no=self.ack_no)
+                                       ack_no=self.ack_no,
+                                       window = window)
         # the sequence number is incremented since it was consumed upon packet creation
         self.sequence_no += 1
         # the server sends the packet to ACK the data packet it received
