@@ -90,8 +90,10 @@ def main():
         size = random.randrange(1,MAXFRAGMENTSIZE)
         if (bytes_to_receive >= size):
             # pick a random size to receive
+            print("the recv size in server is random: " + str(size))
             fragment = s2.recv(size)
-        else: 
+        else:
+            print("the recv size in server is : " + str(bytes_to_receive))
             fragment = s2.recv(bytes_to_receive)
 
         bytes_to_receive = bytes_to_receive - len(fragment)

@@ -636,6 +636,7 @@ class socket:
                 # tries to send the packet and catches any connection refused exception which might mean
                 # the connection was unexpectedly closed/broken
                 try:
+                    print("the datagram to send, the size is: " + str(len(self.data_packets[resend_start_index])))
                     self.socket.sendto(self.data_packets[resend_start_index], self.send_address)
                 # Catch error 111 (Connection refused) in the case where the last ack
                 # was received by this sender and thus the connection was closed
@@ -665,7 +666,7 @@ class socket:
                 new_packet = struct.unpack(PACKET_HEADER_FORMAT, new_packet)
                 #receving window set by the reciever when ack is sent back to sender
                 self.recvwindow = new_packet[window_index]
-                print(self.recvwindow)
+                print("in client, recv window is : "  + str(self.recvwindow))
 
 
                 # ignores the packet if the ACK flag is not set.
@@ -730,8 +731,8 @@ class socket:
                     print("in recv current window: " + str(updated_window))
                     packet_received = self.socket.recv(PACKET_HEADER_LENGTH + bytes_to_receive)
 
-                    # change the recv window size. subtract the length of the packet from the window size
-                    updated_window = updated_window - MAXIMUM_PACKET_SIZE
+                    # change the recv window size. subtract the length of the packet recieved from the window size
+                    updated_window = updated_window - len(packet_received)
                     print("in recv after receiving packet, the window: " + str(updated_window))
 
                 # sends the packet to another method to manage it and gets back the data in return
