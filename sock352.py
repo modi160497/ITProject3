@@ -58,6 +58,7 @@ PACKET_HEADER_LENGTH = struct.calcsize(PACKET_HEADER_FORMAT)
 MAXIMUM_PACKET_SIZE = 4096
 MAXIMUM_PAYLOAD_SIZE = MAXIMUM_PACKET_SIZE - PACKET_HEADER_LENGTH
 MAX_WINDOW = 32000
+CONGESTION_WINDOW = 2
 
 # Global variables that define all the packet bits
 SOCK352_SYN = 0x01
@@ -70,6 +71,7 @@ SOCK352_HAS_OPT = 0x10
 PACKET_FLAG_INDEX = 1
 PACKET_SEQUENCE_NO_INDEX = 8
 PACKET_ACK_NO_INDEX = 9
+window_index = 10
 
 # String message to print out that a connection has been already established
 CONNECTION_ALREADY_ESTABLISHED_MESSAGE = "This socket supports a maximum of one connection\n" \
@@ -187,6 +189,13 @@ class socket:
 
         #create a Box field, later to be initialized within connnect and accept
         self.encrypt_box = None
+
+        # number of packets sent out by sender; used for implementing congestion window
+        # initially set to 2
+        self.packetcount = CONGESTION_WINDOW
+
+        # receiving window sent by reciever to sender; helps sender keep track of how much to send
+        self.recvwindow = 0
 
         return
 
@@ -654,6 +663,10 @@ class socket:
             try:
                 new_packet = self.socket.recv(PACKET_HEADER_LENGTH)
                 new_packet = struct.unpack(PACKET_HEADER_FORMAT, new_packet)
+                #receving window set by the reciever when ack is sent back to sender
+                self.recvwindow = new_packet[window_index]
+                print(self.recvwindow)
+
 
                 # ignores the packet if the ACK flag is not set.
                 if new_packet[PACKET_FLAG_INDEX] != SOCK352_ACK:
@@ -703,19 +716,23 @@ class socket:
         # keep trying to receive packets until the receiver has more bytes left to receive
         while bytes_to_receive > 0:
             # tries to receive the packet
-            if(updated_window==0):
+
+            # if the window size is 0, that means buffer is full. Reset the window to original max size
+            if(updated_window <= 0):
                 updated_window = MAX_WINDOW
             try:
                 # receives the packet of header + maximum data size bytes (although it will be limited
                 # by the sender on the other side)
                 if(self.encrypt):
-                    #add 40 bytes for the encryption information
+                    # add 40 bytes for the encryption information
                     packet_received = self.socket.recv(PACKET_HEADER_LENGTH + bytes_to_receive + 40)
                 else:
-                    print("current window: " + str(updated_window))
+                    print("in recv current window: " + str(updated_window))
                     packet_received = self.socket.recv(PACKET_HEADER_LENGTH + bytes_to_receive)
+
+                    # change the recv window size. subtract the length of the packet from the window size
                     updated_window = updated_window - MAXIMUM_PACKET_SIZE
-                    print("after recieving packet, the window: " + updated_window)
+                    print("in recv after receiving packet, the window: " + str(updated_window))
 
                 # sends the packet to another method to manage it and gets back the data in return
                 str_received = self.manage_recvd_data_packet(packet_received, updated_window)
@@ -740,7 +757,7 @@ class socket:
 
         # creates a generic packet to be sent using parameters that are
         # relevant to Part 1. The default values are specified above in case one or more parameters are not used
-
+        # add the window parameter to indicate the recv. window of the receiver
     def createPacket(self, flags=0x0, sequence_no=0x0, ack_no=0x0, payload_len=0x0, window=0x0):
         return struct.Struct(PACKET_HEADER_FORMAT).pack \
                 (
@@ -781,6 +798,7 @@ class socket:
         # increments the acknowledgement by 1 since it is supposed to be the next expected sequence number
         self.ack_no += 1
         # finally, it creates the ACK packet using the server's current sequence and ack numbers
+        # include the leftover window size sent by the recv method
         ack_packet = self.createPacket(flags=SOCK352_ACK,
                                        sequence_no=self.sequence_no,
                                        ack_no=self.ack_no,
