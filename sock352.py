@@ -635,9 +635,12 @@ class socket:
 
                 # tries to send the packet and catches any connection refused exception which might mean
                 # the connection was unexpectedly closed/broken
+                print("total packets: " + str(total_packets))
+
                 try:
                     print("the datagram to send, the size is: " + str(len(self.data_packets[resend_start_index])))
                     self.socket.sendto(self.data_packets[resend_start_index], self.send_address)
+                    print("packets sent so far:  " + str(resend_start_index))
                 # Catch error 111 (Connection refused) in the case where the last ack
                 # was received by this sender and thus the connection was closed
                 # by the receiver but it happened between this sender's checking
