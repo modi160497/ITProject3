@@ -732,11 +732,17 @@ class socket:
                     packet_received = self.socket.recv(PACKET_HEADER_LENGTH + bytes_to_receive + 40)
                 else:
                     print("in recv current window: " + str(updated_window))
-                    packet_received = self.socket.recv(PACKET_HEADER_LENGTH + bytes_to_receive)
-
+                    print("buffer size is: " + str(PACKET_ACK_NO_INDEX + bytes_to_receive))
+                    try:
+                        packet_received = self.socket.recv(PACKET_HEADER_LENGTH + bytes_to_receive)
+                        print("packet size recv: " + str(len(packet_received)))
                     # change the recv window size. subtract the length of the packet recieved from the window size
-                    updated_window = updated_window - len(packet_received)
-                    print("in recv after receiving packet, the window: " + str(updated_window))
+                        updated_window = updated_window - len(packet_received)
+                        print("in recv after receiving packet, the window: " + str(updated_window))
+
+                    except:
+                        OSError
+                        return data_received
 
                 # sends the packet to another method to manage it and gets back the data in return
                 str_received = self.manage_recvd_data_packet(packet_received, updated_window)
@@ -744,7 +750,7 @@ class socket:
                 # adjusts the numbers accordingly based on return value of manage data packet
                 if str_received is not None:
                     # appends the data received to the total buffer of all the data received so far
-                    print(type(str_received))
+
                     data_received += str(str_received)
                     # decrements bytes to receive by the length of last data received since that many
                     # less bytes need to be transmitted now
