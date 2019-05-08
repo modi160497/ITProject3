@@ -1,8 +1,9 @@
-# this is the initial socket library for project 2
+# CS 352 project part 2
+# this is the initial socket library for project 2 
 # You wil need to fill in the various methods in this
-# library
+# library 
 
-# main libraries
+# main libraries 
 import binascii
 import socket as syssock
 import struct
@@ -13,31 +14,31 @@ import sys
 import time
 from random import randint
 
-# encryption libraries
+# encryption libraries 
 import nacl.utils
 import nacl.secret
 import nacl.utils
 from nacl.public import PrivateKey, Box
 
-# if you want to debug and print the current stack frame
+# if you want to debug and print the current stack frame 
 from inspect import currentframe, getframeinfo
 
 # these are globals to the sock352 class and
 # define the UDP ports all messages are sent
 # and received from
 
-# the ports to use for the sock352 messages
+# the ports to use for the sock352 messages 
 global sock352portTx
 global sock352portRx
-# the public and private keychains in hex format
+# the public and private keychains in hex format 
 global publicKeysHex
 global privateKeysHex
 
-# the public and private keychains in binary format
+# the public and private keychains in binary format 
 global publicKeys
 global privateKeys
 
-# the encryption flag
+# the encryption flag 
 global ENCRYPT
 
 publicKeysHex = {}
@@ -45,10 +46,10 @@ privateKeysHex = {}
 publicKeys = {}
 privateKeys = {}
 
-# this is 0xEC
+# this is 0xEC 
 ENCRYPT = 236
 
-# this is the structure of the sock352 packet
+# this is the structure of the sock352 packet 
 PACKET_HEADER_FORMAT = "!BBBBHHLLQQLL"
 PACKET_HEADER_LENGTH = struct.calcsize(PACKET_HEADER_FORMAT)
 
@@ -81,7 +82,7 @@ def init(UDPportTx, UDPportRx):
     global sock352portTx
     global sock352portRx
 
-    # create the sockets to send and receive UDP packets on
+    # create the sockets to send and receive UDP packets on 
     # if the ports are not equal, create two sockets, one for Tx and one for Rx
 
     # Sets the transmit port to 27182 (default) if its None or 0
@@ -196,9 +197,6 @@ class socket:
         # receiving window sent by reciever to sender; helps sender keep track of how much to send
         self.recvwindow = MAX_WINDOW
 
-        #receiving window which updates itself after each packet received.
-        self.updated_window=MAX_WINDOW
-
         #number of packets sent
         self.pack_sent=0
 
@@ -210,6 +208,11 @@ class socket:
 
         #once all ACKS are received, we can proceed to send the next set of packets
         self.can_send = True
+        
+        self.ack_lock = threading.Lock()
+
+        self.send_lock = threading.Lock()
+
 
         return
 
@@ -623,7 +626,6 @@ class socket:
 
         # starts the data packet transmission
         print("Started data packet transmission...")
-        print("total packets: " + str(total_packets))
         while not self.can_close:
             # calculates the index from which to start sending packets
             # when sending the first time, it will be 0
@@ -650,34 +652,42 @@ class socket:
 
                 # tries to send the packet and catches any connection refused exception which might mean
                 # the connection was unexpectedly closed/broken
-                #print("total packets: " + str(total_packets))
+                print("total packets: " + str(total_packets))
 
                 try:
-                # if received all the acks for the previous congestion window
-                ## then send packets for next incremented congestion window
+                   # if received all the acks for the previous congestion window
+                    # then send packets for next incremented congestion window
                     if self.can_send == True:
-                    # try to send packets in congestion window, but check if the receiving window is smaller before sending
-                    # set the counter of how many packets we sent in this window to 0
-                        self.pack_sent=0
+                        # try to send packets in congestion window, but check if the receiving window is smaller before sending
+                        # set the counter of how many packets we sent in this window to 0
+                        
+                        self.ack_lock.acquire()
                         self.ack_recv=0
+                        self.ack_lock.release()
+
+                        self.pack_sent=0
                         print(self.iterate)
                         for i in range(self.iterate):
                             if((self.can_close == False)  and resend_start_index< total_packets and not self.retransmit):
                                 if (self.recvwindow >= len(self.data_packets[resend_start_index])):
                                     print("the datagram to send, the size is: " + str(len(self.data_packets[resend_start_index])))
                                     self.socket.sendto(self.data_packets[resend_start_index], self.send_address)
-                                    print("packet sent so far:  " + str(resend_start_index+1))
+                                    print("packets sent so far:  " + str(resend_start_index))
                                     self.recvwindow-=len(self.data_packets[resend_start_index])
                                     resend_start_index +=1
                                     self.pack_sent+=1
                                 else:
-                                    print("else")
-                                    sends=self.data_packets[resend_start_index][:self.recvwindow]
-                                    self.data_packets[resend_start_index]=self.data_packets[resend_start_index][self.recvwindow:]
-                                    self.socket.sendto(sends, self.send_address)
-                                    self.pack_sent+=1
-            #wait for all ACKS for the packets just sent to be received before sending packets in next window
+                                   print("else")
+                                   sends=self.data_packets[resend_start_index][:self.recvwindow]
+                                   self.data_packets[resend_start_index]=self.data_packets[resend_start_index][self.recvwindow:]
+                                   self.socket.sendto(sends, self.send_address)
+                                   self.pack_sent+=1
+                        #wait for all ACKS for the packets just sent to be received before sending packets in next window
+                        
+                        self.send_lock.acquire()
                         self.can_send=False
+                        self.send_lock.release()
+
                 # Catch error 111 (Connection refused) in the case where the last ack
                 # was received by this sender and thus the connection was closed
                 # by the receiver but it happened between this sender's checking
@@ -687,6 +697,8 @@ class socket:
                         raise error
                     self.can_close = True
                     break
+                resend_start_index += 1
+
         # waits for recv thread to finish before returning from the method
         recv_ack_thread.join()
 
@@ -705,13 +717,18 @@ class socket:
                 #receving window set by the reciever when ack is sent back to sender
                 self.recvwindow = new_packet[window_index]
                 print("in client, recv window is : "  + str(self.recvwindow))
-                #increment ack counter once received
+                
+                self.ack_lock.acquire()
                 self.ack_recv+=1
+
                 # if we received all the packets sent, then multiply congestion window by 2. Now we can send the next set of packets
-                if(self.ack_recv == self.pack_sent):
-                    print(self.ack_recv, self.pack_sent)
-                    self.iterate*=2
-                    self.can_send = True
+                if(self.ack_recv == self.pack_sent and self.can_send == False):
+                        print(self.ack_recv, self.pack_sent)
+                        self.iterate*=2
+                        self.send_lock.acquire()
+                        self.can_send = True
+                        self.send_lock.release()
+                self.ack_lock.release()
 
                 # ignores the packet if the ACK flag is not set.
                 if new_packet[PACKET_FLAG_INDEX] != SOCK352_ACK:
@@ -755,7 +772,7 @@ class socket:
         # also declares a variable to hold all the string of the data that has been received
         data_received = ""
 
-        print("bytes to recv : " + str(bytes_to_receive))
+        updated_window = MAX_WINDOW
 
         print("Started receiving data packets...")
         # keep trying to receive packets until the receiver has more bytes left to receive
@@ -763,8 +780,8 @@ class socket:
             # tries to receive the packet
 
             # if the window size is 0, that means buffer is full. Reset the window to original max size
-            if(self.updated_window <= 0):
-                self.updated_window = MAX_WINDOW
+            if(updated_window <= 0):
+                updated_window = MAX_WINDOW
             try:
                 # receives the packet of header + maximum data size bytes (although it will be limited
                 # by the sender on the other side)
@@ -772,22 +789,21 @@ class socket:
                     # add 40 bytes for the encryption information
                     packet_received = self.socket.recv(PACKET_HEADER_LENGTH + bytes_to_receive + 40)
                 else:
-                    #print("in recv current window: " + str(self.updated_window))
-                    #print("buffer size is: " + str(PACKET_ACK_NO_INDEX + bytes_to_receive))
+                    print("in recv current window: " + str(updated_window))
+                    print("buffer size is: " + str(PACKET_ACK_NO_INDEX + bytes_to_receive))
                     try:
                         packet_received = self.socket.recv(PACKET_HEADER_LENGTH + bytes_to_receive)
                         print("packet size recv: " + str(len(packet_received)))
                     # change the recv window size. subtract the length of the packet recieved from the window size
-                        self.updated_window = self.updated_window - len(packet_received)
-                        print("after receiving packet, window: " + str(self.updated_window))
+                        updated_window = updated_window - len(packet_received)
+                        print("in recv after receiving packet, the window: " + str(updated_window))
 
                     except:
-                        print("error in recv")
                         OSError
                         return data_received
 
                 # sends the packet to another method to manage it and gets back the data in return
-                str_received = self.manage_recvd_data_packet(packet_received, self.updated_window)
+                str_received = self.manage_recvd_data_packet(packet_received, updated_window)
 
                 # adjusts the numbers accordingly based on return value of manage data packet
                 if str_received is not None:
@@ -797,7 +813,6 @@ class socket:
                     # decrements bytes to receive by the length of last data received since that many
                     # less bytes need to be transmitted now
                     bytes_to_receive -= len(str_received)
-                    print("n bytes to recieve after packet: " + str(bytes_to_receive))
             # catches timeout, in which case it just tries to another packet
             except syssock.timeout:
                 pass
@@ -840,8 +855,6 @@ class socket:
         # for the next in-order sequence no (which is the ack number)
         #     Case 1, the sequence number is in-order so send back the acknowledgement
         #     Case 2, the sequence number is out-of-order so drop the packet
-        print("the seqeunce # of packets: " + str(packet_header[PACKET_SEQUENCE_NO_INDEX]))
-        print ("the ack number right now : " + str(self.ack_no))
         if packet_header[PACKET_SEQUENCE_NO_INDEX] != self.ack_no:
             return
         if self.encrypt == True:
@@ -852,9 +865,8 @@ class socket:
         self.data_packets.append(packet_data)
         # increments the acknowledgement by 1 since it is supposed to be the next expected sequence number
         self.ack_no += 1
-        print("ack sent by client: " + str(self.ack_no) + "after window of size : " + str(window))
         # finally, it creates the ACK packet using the server's current sequence and ack numbers
-        # include the leftover window size sent by the recv method to send back to the client
+        # include the leftover window size sent by the recv method
         ack_packet = self.createPacket(flags=SOCK352_ACK,
                                        sequence_no=self.sequence_no,
                                        ack_no=self.ack_no,
