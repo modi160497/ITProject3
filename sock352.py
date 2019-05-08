@@ -674,16 +674,18 @@ class socket:
                                     self.socket.sendto(self.data_packets[resend_start_index], self.send_address)
                                     print("packets sent so far:  " + str(resend_start_index))
                                     self.recvwindow-=len(self.data_packets[resend_start_index])
-                                    resend_start_index +=1
-                                    self.pack_sent+=1
+                                   
                                 else:
-                                   print("else")
-                                   sends=self.data_packets[resend_start_index][:self.recvwindow]
-                                   self.data_packets[resend_start_index]=self.data_packets[resend_start_index][self.recvwindow:]
-                                   self.socket.sendto(sends, self.send_address)
-                                   self.pack_sent+=1
+                                    print("else")
+                                    send1=self.data_packets[resend_start_index][:self.recvwindow]
+                                    send2=self.data_packets[resend_start_index][self.recvwindow:]
+                                    self.data_packets.insert(resend_start_index,send2)
+                                    self.data_packets.insert(resend_start_index,send1)
+                                    self.data_packets.pop(resend_start_index+2)
+                                    self.socket.sendto(send1, self.send_address)                                   
                         #wait for all ACKS for the packets just sent to be received before sending packets in next window
-                        
+                                resend_start_index+=1
+                                self.pack_sent+=1 
                         self.send_lock.acquire()
                         self.can_send=False
                         self.send_lock.release()
