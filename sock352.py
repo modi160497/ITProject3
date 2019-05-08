@@ -195,7 +195,19 @@ class socket:
         self.packetcount = CONGESTION_WINDOW
 
         # receiving window sent by reciever to sender; helps sender keep track of how much to send
-        self.recvwindow = 0
+        self.recvwindow = MAX_WINDOW
+
+        #number of packets sent
+        self.pack_sent=0
+
+        #number of ACKS received by sender
+        self.ack_recv=0
+
+        #a counter to know how much the congestion window should be after RTTS
+        self.iterate=2
+
+        #once all ACKS are received, we can proceed to send the next set of packets
+        self.can_send = True
 
         return
 
@@ -638,9 +650,32 @@ class socket:
                 print("total packets: " + str(total_packets))
 
                 try:
-                    print("the datagram to send, the size is: " + str(len(self.data_packets[resend_start_index])))
-                    self.socket.sendto(self.data_packets[resend_start_index], self.send_address)
-                    print("packets sent so far:  " + str(resend_start_index))
+                   # if received all the acks for the previous congestion window
+                    # then send packets for next incremented congestion window
+                    if self.can_send == True:
+                        # try to send packets in congestion window, but check if the receiving window is smaller before sending
+                        # set the counter of how many packets we sent in this window to 0
+                        self.pack_sent=0
+                        self.ack_recv=0
+                        print(self.iterate)
+                        for i in range(self.iterate):
+                            if((self.can_close == False)  and resend_start_index< total_packets and not self.retransmit):
+                                if (self.recvwindow >= len(self.data_packets[resend_start_index])):
+                                    print("the datagram to send, the size is: " + str(len(self.data_packets[resend_start_index])))
+                                    self.socket.sendto(self.data_packets[resend_start_index], self.send_address)
+                                    print("packets sent so far:  " + str(resend_start_index))
+                                    self.recvwindow-=len(self.data_packets[resend_start_index])
+                                    resend_start_index +=1
+                                    self.pack_sent+=1
+                                else:
+                                   print("else")
+                                   sends=self.data_packets[resend_start_index][:self.recvwindow]
+                                   self.data_packets[resend_start_index]=self.data_packets[resend_start_index][self.recvwindow:]
+                                   self.socket.sendto(sends, self.send_address)
+                                   self.pack_sent+=1
+                        #wait for all ACKS for the packets just sent to be received before sending packets in next window
+                        self.can_send=False
+
                 # Catch error 111 (Connection refused) in the case where the last ack
                 # was received by this sender and thus the connection was closed
                 # by the receiver but it happened between this sender's checking
@@ -670,7 +705,13 @@ class socket:
                 #receving window set by the reciever when ack is sent back to sender
                 self.recvwindow = new_packet[window_index]
                 print("in client, recv window is : "  + str(self.recvwindow))
-
+                #increment ack counter once received
+                self.ack_recv+=1
+                # if we received all the packets sent, then multiply congestion window by 2. Now we can send the next set of packets
+                if(self.ack_recv == self.pack_sent):
+                        print(self.ack_recv, self.pack_sent)
+                        self.iterate*=2
+                        self.can_send = True
 
                 # ignores the packet if the ACK flag is not set.
                 if new_packet[PACKET_FLAG_INDEX] != SOCK352_ACK:
