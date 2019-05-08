@@ -1,0 +1,149 @@
+4/30/2019 project_description_part3.docx
+chrome-extension://bpmcpldpdmajfigpchkicefoigmkfalc/views/app.html 1/4
+CS 352 Spring 2019 Programming
+Project Part 3
+1. Overview:
+For part 3 of the project, your team will connue to improve the socket library you have developed in
+part 1. For this part, you will add windowing to the messages sent by your socket library. The client
+and server have been modified to use random packet sizes for sending and receiving.
+As part of the project part 1, you will be given a number of files. You can also find them in the sakai
+site under "Resources" -> "Project resources" -> "Part 3" .
+Your library must implement the following methods as defined in the sock352.py file:
+def init(UDPportTx,UDPportRx):
+def readKeyChain(filename):
+def __init__(self): def
+bind(self,address): def
+connect(self,*args): def
+listen(self,backlog): def
+accept(self,*args):
+def close(self):
+def send(self,buffer):
+def recv(self,nbytes):
+def readKeyChain(filename):
+3. The 352 RDP v1 protocol:
+Recall as in TCP, 352 RDP v1 maps the abstracon of a logical byte stream onto a model of an
+unreliable packet network. 352 RDP v1 thus closely follows TCP for the underlying packet protocol. A
+connecon has 3 phases: Set-up, data transfer, and terminaon. 352 RDP v1 uses a much simpler
+meout strategy than TCP for handling lost packets.
+client3.c : This is the original client source code. file. You may not alter the code for this file. It
+must run using your sock352.py file.
+1.
+server3.c : This is the original server file You may not alter the code for this file. It must run
+using your your sock352.py file.
+2.
+sock352.py: This is a new library for part 3. You must fill in the methods defined in this file, as
+below.
+3.
+4/30/2019 project_description_part3.docx
+chrome-extension://bpmcpldpdmajfigpchkicefoigmkfalc/views/app.html 2/4
+Packet structure:
+ The CS 352 RDP v1 packet as defined as:
+< –-----------------------------32 Bits –----------------------------- >
+Version Flags Opon Protocol
+Header Length Packet Checksum
+Source Port
+Desnaon Port
+Sequence Number
+Acknowledgement Number
+Receiver’s Window
+Payload Length
+The flags field is defined as:
+< –-----------------------------8 Bits –----------------------------- >
+Has Opon RESET ACK FIN SYN
+Connecon Set Up:
+
+The client iniates a connecon by sending a packet with the SYN bit set in the flags field, picking a
+random sequence number, and seng the sequence_no field to this number. If no connecon is
+currently open, the server responds with both the SYN and ACK bits set, picks a random number for
+it's sequence_no field and sets the ack_no field to the client's incoming sequence_no+1. If
+there is an exisng connecon, the server responds with the sequence_no+1, but the RST flag set.
+Connecon addions for part 3: Window sizes
+Since we are doing flow control, the receiver must keep a buffer of received data, every me recv is
+called, the specified amount of data is returned and removed from the buffer. The buffer is of size W,
+W=32kb for this project. If the buffer is empty and recv is called, wait unl there is something to
+return. Alternately, if there is no more room in the buffer, send() calls by the sender should not return
+unl there is room. This is kept track of by the widow size field as in real TCP. Whenever you send an
+ack, include the room le in your buffer at the moment.
+Addionally, you should use a simplified congeson window. Start at two packets and increase
+4/30/2019 project_description_part3.docx
+chrome-extension://bpmcpldpdmajfigpchkicefoigmkfalc/views/app.html 3/4
+exponenally (double each me). If a packet is dropped (meout) go back to two. Remember that you
+may not send more than the receive window no maer the congeson window.
+Data exchange:
+352 RDP follows a simplified Go-Back-N protocol for data exchange, as described in secon Kurose
+and Ross., Chapter 3.4.3, pages 218-223 and extended to TCP style byte streams as described in
+Chapter 3.5.2, pages 233-238.
+When the client sends data, if it is larger than the maximum UDP packet size (64K bytes, minus the
+size of the sock352 header), it is first broken up into segments, that is, parts of the applicaon
+bytestream, of up to 64K. If the client makes a call smaller than 64K, then the data is sent in a single
+UDP packet of that size, with the payload_len field set appropriately. Segments are acknowledged
+as the last segment received in-order (that is, go-back-N). Data is delivered to the higher level
+applicaon inorder based on the read() calls made. If insufficient data exists for a read() call,
+paral data can be returned and the number of bytes set in the call's return value.
+Not that just like TCP, the ACK field is set for each data packet.
+Timeouts and retransmissions:
+352 RDP v1 uses a single mer model of meouts and re-transmission, similar to TCP in that there
+should be a single mer per connecon, although each segment has a logical meout. The meout
+for a segment is 0.2 seconds. That is, if a packet has not been acknowledged aer 0.2 seconds it
+should be re-transmied, and the logical meout would be set again set to 0.2 seconds in the future
+for that segment. The meout used for a connecon should be the meout of the oldest segment.
+There are two strategies for implemenng meouts. One approaches uses Unix signals and other uses
+a separate thread. These will be covered in class and recitaon.
+Connecon terminaon:
+Connecon terminaon will follow a similar algorithm as TCP, although simpified. In this model, each
+side closes it's send side separtately, see pages 255-256 of Kurose and Ross and pages 39-40 of
+Stevens. In version 1, it is OK for the client to end the connecon with a FIN bit set when it both gets
+the last ACK and close has been called. That is, close cannot terminate unl the last ACK is
+received from the server. The sever can terminate the connecon under the same confions.
+If the socket receives an FIN from the other side, and it's data buffer is empty, the socket can be closed
+aer a meout of 5 seconds.
+Funconality: 80% (windowing with random packet sizes – client3.py and server3.py)
+Style: 20%
+NOTE: I will not be tesng encrypon just regular send and recv as in the aatched files.
+Style:
+Style points are given by the instructor and TA aer reading the code. Style is subjecve, but will be
+3. Grading:
+4/30/2019 project_description_part3.docx
+chrome-extension://bpmcpldpdmajfigpchkicefoigmkfalc/views/app.html 4/4
+graded on a scale from 1-5 where 1 is incomprehensible code and 5 means it is perfectly clear what
+the programmer intended.
+You must hand in a single archived file, either zip, tar, gzipped tar, bzipped tar or WinRAR
+(.zip, .tar, .tgz, .rar) that contains: (1) README.TXT file with your team members, (2) the cllient1.py,
+client2.py and client3.py source code, (3) the server1.py, server2.py and server3.py source code, (4) a
+single sock352.py which works for all clients and servers and (5) any other files your library needs to
+work.
+Your archive file must include a file called “README.TXT” that includes the names of the project
+partners for the project!
+4. What to hand in
+
+
+
+
+
+
+
+
+4/30/2019 project_description_part3.docx
+chrome-extension://bpmcpldpdmajfigpchkicefoigmkfalc/views/app.html 1/4
+CS 352 Spring 2019 Programming
+Project Part 3
+1. Overview:
+For part 3 of the project, your team will connue to improve the socket library you have developed in
+part 1. For this part, you will add windowing to the messages sent by your socket library. The client
+and server have been modified to use random packet sizes for sending and receiving.
+As part of the project part 1, you will be given a number of files. You can also find them in the sakai
+site under "Resources" -> "Project resources" -> "Part 3" .
+Your library must implement the following methods as defined in the sock352.py file:
+def init(UDPportTx,UDPportRx):
+def readKeyChain(filename):
+def __init__(self): def
+bind(self,address): def
+connect(self,*args): def
+listen(self,backlog): def
+accept(self,*args):
+def close(self):
+def send(self,buffer):
+def recv(self,nbytes):
+def readKeyChain(filename):
+3. The 352 RDP v1 protocol:
+Recall as in TCP, 352 RDP v1 maps the abstracon of a logical byte stream on
