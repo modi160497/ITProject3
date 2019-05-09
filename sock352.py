@@ -840,6 +840,13 @@ class socket:
 
             if (self.buffer_size <= 0):
                 self.buffer_size = MAX_WINDOW
+                #send ack to sender letting it know the buffer is is now being reset 
+                ack_packet = self.createPacket(flags=SOCK352_ACK,
+                                               sequence_no=self.sequence_no-1,
+                                               ack_no=self.ack_no,
+                                               window=MAX_WINDOW)
+
+                self.socket.sendto(ack_packet, self.send_address)
 
             try:
                 # receives the packet of header + maximum data size bytes (although it will be limited
