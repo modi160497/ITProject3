@@ -607,7 +607,7 @@ class socket:
 
         return total_packets
 
-    def send(self, buffer):
+     def send(self, buffer):
         # makes sure that the file length is set and has been communicated to the receiver
         if self.file_len == -1:
             self.socket.sendto(buffer, self.send_address)
@@ -626,6 +626,7 @@ class socket:
 
         # starts the data packet transmission
         print("Started data packet transmission...")
+        print("total packets: " + str(total_packets))
         while not self.can_close:
             # calculates the index from which to start sending packets
             # when sending the first time, it will be 0
@@ -636,10 +637,12 @@ class socket:
             else:
                 resend_start_index = int(self.last_data_packet_acked[PACKET_ACK_NO_INDEX]) - start_sequence_no
 
+            #print("index:" + str(resend_start_index))
             # checks if the packet to start retransmitting from is the total amount of packets this
             # would mean the last data packet has been transmitted and so its safe to close the connection
             if resend_start_index == total_packets:
                 self.can_close = True
+
 
             # adjusts retransmit to indicate that the sender started retransmitting using locks
             self.retransmit_lock.acquire()
@@ -649,47 +652,43 @@ class socket:
             # continually tries to transmit packets while the connection cannot be closed from resend start index
             # to the rest of the packets (or at least until as much as it can)
             while not self.can_close and resend_start_index < total_packets and not self.retransmit:
-
+                #print(resend_start_index)
+                #print(total_packets)
                 # tries to send the packet and catches any connection refused exception which might mean
                 # the connection was unexpectedly closed/broken
-                print("total packets: " + str(total_packets))
+                #print("total packets: " + str(total_packets))
 
                 try:
-                   # if received all the acks for the previous congestion window
+                    # if received all the acks for the previous congestion window
                     # then send packets for next incremented congestion window
                     if self.can_send == True:
                         # try to send packets in congestion window, but check if the receiving window is smaller before sending
                         # set the counter of how many packets we sent in this window to 0
-                        
                         self.ack_lock.acquire()
                         self.ack_recv=0
-                        self.ack_lock.release()
-
                         self.pack_sent=0
-                        print(self.iterate)
+
+                        #determine # ofpackets to send          
+                        count=0
+                        iter_bytes=0
                         for i in range(self.iterate):
-                            if((self.can_close == False)  and resend_start_index< total_packets and not self.retransmit):
-                                if (self.recvwindow >= len(self.data_packets[resend_start_index])):
-                                    print("the datagram to send, the size is: " + str(len(self.data_packets[resend_start_index])))
-                                    self.socket.sendto(self.data_packets[resend_start_index], self.send_address)
-                                    print("packets sent so far:  " + str(resend_start_index))
-                                    self.recvwindow-=len(self.data_packets[resend_start_index])
-                                   
-                                else:
-                                    print("else")
-                                    send1=self.data_packets[resend_start_index][:self.recvwindow]
-                                    send2=self.data_packets[resend_start_index][self.recvwindow:]
-                                    self.data_packets.insert(resend_start_index,send2)
-                                    self.data_packets.insert(resend_start_index,send1)
-                                    self.data_packets.pop(resend_start_index+2)
-                                    self.socket.sendto(send1, self.send_address)                                   
+                            if(resend_start_index+i<total_packets and iter_bytes<self.recvwindow):
+                                if(iter_bytes + len(self.data_packets[resend_start_index+i]) > self.recvwindow):
+                                    self.split(resend_start_index+i, self.recvwindow - iter_bytes)
+                                    total_packets+=1
+                                iter_bytes+=len(self.data_packets[resend_start_index+i])
+                                count+=1
+                        self.ack_lock.release()
+                        print("packs to send:" + str(count))
+                        for i in range(count):
+                            self.socket.sendto(self.data_packets[resend_start_index], self.send_address)
+                            self.pack_sent+=1
+                            print("pack size:" +  str(len(self.data_packets[resend_start_index])))
+                            resend_start_index+=1
                         #wait for all ACKS for the packets just sent to be received before sending packets in next window
-                                resend_start_index+=1
-                                self.pack_sent+=1 
                         self.send_lock.acquire()
                         self.can_send=False
                         self.send_lock.release()
-
                 # Catch error 111 (Connection refused) in the case where the last ack
                 # was received by this sender and thus the connection was closed
                 # by the receiver but it happened between this sender's checking
@@ -699,14 +698,50 @@ class socket:
                         raise error
                     self.can_close = True
                     break
-                resend_start_index += 1
-
         # waits for recv thread to finish before returning from the method
         recv_ack_thread.join()
 
         print("Finished transmitting data packets")
         return len(buffer)
 
+
+      
+    def split(self,index, val):
+        packet= self.data_packets[index]
+        packet_header = packet[:PACKET_HEADER_LENGTH]
+        packet_data = packet[PACKET_HEADER_LENGTH:]
+        packet_header = struct.unpack(PACKET_HEADER_FORMAT, packet_header)
+        seq_no=packet_header[PACKET_SEQUENCE_NO_INDEX]
+        ack_no=packet_header[PACKET_ACK_NO_INDEX]
+        send1=packet_data[:val-40]
+        send2=packet_data[val-40:]
+        packet1 = self.createPacket(flags=0x0,
+                                           sequence_no=seq_no,
+                                           ack_no=ack_no,
+                                           payload_len=len(send1))
+        packet2=self.createPacket(flags=0x0,
+                                           sequence_no=seq_no+1,
+                                           ack_no=ack_no+1,
+                                           payload_len=len(send2))
+
+        self.data_packets.insert(index,packet2+send2)
+        self.data_packets.insert(index,packet1+send1)
+        self.data_packets.pop(index+2)
+
+        for i in range(index+2,len(self.data_packets)):
+            pack= self.data_packets[i]
+            pack_header = pack[:PACKET_HEADER_LENGTH]
+            pack_data = pack[PACKET_HEADER_LENGTH:]
+            pack_header = struct.unpack(PACKET_HEADER_FORMAT, pack_header)
+            seq=pack_header[PACKET_SEQUENCE_NO_INDEX]
+            ack=pack_header[PACKET_ACK_NO_INDEX]
+            packet=self.createPacket(flags=0x0,
+                                           sequence_no=seq+1,
+                                           ack_no=ack+1,
+                                           payload_len=len(pack_data))
+            self.data_packets[i]=packet+pack_data
+
+      
     # method responsible for receiving acks for the data packets the sender sends
     def recv_acks(self):
         # tries to receive the ack as long as the connection is not ready to be closed
@@ -718,20 +753,29 @@ class socket:
                 new_packet = struct.unpack(PACKET_HEADER_FORMAT, new_packet)
                 #receving window set by the reciever when ack is sent back to sender
                 self.recvwindow = new_packet[window_index]
-                print("in client, recv window is : "  + str(self.recvwindow))
-                
-                self.ack_lock.acquire()
-                self.ack_recv+=1
+                #print("in client, recv window is : "  + str(self.recvwindow))
 
+                if(self.recvwindow !=32000):
+                    self.ack_lock.acquire()
+                    self.ack_recv+=1
+                    self.ack_lock.release()
+                else:
+                    print("ACK32000: " + str(new_packet[PACKET_ACK_NO_INDEX]))
+                    print("SEQ32000: " + str(new_packet[PACKET_SEQUENCE_NO_INDEX]))
+                if(self.recvwindow == 0):
+                    print("ACK0: " + str(new_packet[PACKET_ACK_NO_INDEX]))
+                    print("SEQ0: " + str(new_packet[PACKET_SEQUENCE_NO_INDEX]))
+                    self.send_lock.acquire()
+                    self.can_send = False
+                    self.send_lock.release()
                 # if we received all the packets sent, then multiply congestion window by 2. Now we can send the next set of packets
-                if(self.ack_recv == self.pack_sent and self.can_send == False):
-                        print(self.ack_recv, self.pack_sent)
-                        self.iterate*=2
-                        self.send_lock.acquire()
-                        self.can_send = True
-                        self.send_lock.release()
-                self.ack_lock.release()
-
+                if(self.ack_recv == self.pack_sent and self.can_send == False and self.recvwindow>0):
+                    #print(self.ack_recv, self.pack_sent)
+                    self.iterate*=2
+                    self.send_lock.acquire()
+                    self.can_send = True
+                    self.send_lock.release()
+                    print("recv window after all ACKS: " + str(self.recvwindow))
                 # ignores the packet if the ACK flag is not set.
                 if new_packet[PACKET_FLAG_INDEX] != SOCK352_ACK:
                     continue
@@ -739,10 +783,11 @@ class socket:
                 # if the last data packet acked is not set, the newly received packet is set to be the last data packet
                 # acked. Otherwise, checks if the new packet's sequence number is greater than the last data packet
                 # acked's sequence number, otherwise it assumes it could be a duplicate ACK
-                if self.last_data_packet_acked is None or \
+                if (self.last_data_packet_acked is None or \
                         new_packet[PACKET_SEQUENCE_NO_INDEX] > self.last_data_packet_acked[
-                    PACKET_SEQUENCE_NO_INDEX]:
-                    self.last_data_packet_acked = new_packet
+                    PACKET_SEQUENCE_NO_INDEX]):
+                        self.last_data_packet_acked = new_packet
+
 
             # in the case where the recv times out, it locks down retransmit and sets it to True
             # to indicate that no ACk was received within the timeout window of 0.2 seconds
