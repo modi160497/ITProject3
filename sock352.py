@@ -774,50 +774,68 @@ class socket:
         # also declares a variable to hold all the string of the data that has been received
         data_received = ""
 
-        updated_window = MAX_WINDOW
+        #keeps track of upto how much of the buffer can be cleared based on nbytes
+
+
+        #boolean to check that nbytes amount has reached and recv. should return by clearning the buffer of that amount
+        full = False
+
+        print(" n bytes to recv : " + str(bytes_to_receive))
 
         print("Started receiving data packets...")
         # keep trying to receive packets until the receiver has more bytes left to receive
-        while bytes_to_receive > 0:
+        while bytes_to_receive > 0 and full==False:
             # tries to receive the packet
 
-            # if the window size is 0, that means buffer is full. Reset the window to original max size
-            if(updated_window <= 0):
-                updated_window = MAX_WINDOW
+            if (self.buffer_size <= 0):
+                self.buffer_size = MAX_WINDOW
+
             try:
                 # receives the packet of header + maximum data size bytes (although it will be limited
                 # by the sender on the other side)
                 if(self.encrypt):
-                    # add 40 bytes for the encryption information
+                    #add 40 bytes for the encryption information
                     packet_received = self.socket.recv(PACKET_HEADER_LENGTH + bytes_to_receive + 40)
                 else:
-                    print("in recv current window: " + str(updated_window))
-                    print("buffer size is: " + str(PACKET_ACK_NO_INDEX + bytes_to_receive))
+                    print("in recv current window: " + str(self.buffer_size))
+
                     try:
-                        packet_received = self.socket.recv(PACKET_HEADER_LENGTH + bytes_to_receive)
+                        packet_received = self.socket.recv(self.buffer_size)
                         print("packet size recv: " + str(len(packet_received)))
-                    # change the recv window size. subtract the length of the packet recieved from the window size
-                        updated_window = updated_window - len(packet_received)
-                        print("in recv after receiving packet, the window: " + str(updated_window))
+
+                        # change the recv window size. subtract the length of the packet recieved from the window size
+                        self.buffer_size = self.buffer_size - len(packet_received)
+
+                        print("in recv after receiving packet, the window: " + str(self.buffer_size))
+
+                        if(bytes_to_receive-len(packet_received) < 0):
+                            full = True
+                            print("full; n bytes now: " + str(bytes_to_receive))
+
+                        else:
+                            bytes_to_receive = bytes_to_receive - len(packet_received)
+                            print("n bytes now: " + str(bytes_to_receive))
 
                     except:
+                        print("error in recv")
                         OSError
                         return data_received
 
                 # sends the packet to another method to manage it and gets back the data in return
-                str_received = self.manage_recvd_data_packet(packet_received, updated_window)
+                str_received = self.manage_recvd_data_packet(packet_received, self.buffer_size)
 
                 # adjusts the numbers accordingly based on return value of manage data packet
                 if str_received is not None:
                     # appends the data received to the total buffer of all the data received so far
+                    self.buffer += str_received
 
-                    data_received += str(str_received)
-                    # decrements bytes to receive by the length of last data received since that many
-                    # less bytes need to be transmitted now
-                    bytes_to_receive -= len(str_received)
             # catches timeout, in which case it just tries to another packet
             except syssock.timeout:
                 pass
+
+        #returns the requested number of bytes
+        data_received = self.buffer[:nbytes]
+
         # since it's done with receiving all the bytes, it marks the socket as safe to close
         self.can_close = True
 
@@ -827,7 +845,7 @@ class socket:
 
         # creates a generic packet to be sent using parameters that are
         # relevant to Part 1. The default values are specified above in case one or more parameters are not used
-        # add the window parameter to indicate the recv. window of the receiver
+
     def createPacket(self, flags=0x0, sequence_no=0x0, ack_no=0x0, payload_len=0x0, window=0x0):
         return struct.Struct(PACKET_HEADER_FORMAT).pack \
                 (
@@ -847,7 +865,7 @@ class socket:
 
         # Manages a packet received based on the flag
 
-    def manage_recvd_data_packet(self, packet, window):
+    def manage_recvd_data_packet(self, packet,window):
         packet_header = packet[:PACKET_HEADER_LENGTH]
         packet_data = packet[PACKET_HEADER_LENGTH:]
         packet_header = struct.unpack(PACKET_HEADER_FORMAT, packet_header)
@@ -857,6 +875,9 @@ class socket:
         # for the next in-order sequence no (which is the ack number)
         #     Case 1, the sequence number is in-order so send back the acknowledgement
         #     Case 2, the sequence number is out-of-order so drop the packet
+        print("sequence number of packet : " + str(packet_header[PACKET_SEQUENCE_NO_INDEX]))
+        print("ack number in recv: " + str(self.ack_no))
+
         if packet_header[PACKET_SEQUENCE_NO_INDEX] != self.ack_no:
             return
         if self.encrypt == True:
@@ -868,7 +889,6 @@ class socket:
         # increments the acknowledgement by 1 since it is supposed to be the next expected sequence number
         self.ack_no += 1
         # finally, it creates the ACK packet using the server's current sequence and ack numbers
-        # include the leftover window size sent by the recv method
         ack_packet = self.createPacket(flags=SOCK352_ACK,
                                        sequence_no=self.sequence_no,
                                        ack_no=self.ack_no,
