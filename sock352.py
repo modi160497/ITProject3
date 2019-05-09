@@ -189,35 +189,31 @@ class socket:
 
         #create a Box field, later to be initialized within connnect and accept
         self.encrypt_box = None
-
-        # number of packets sent out by sender; used for implementing congestion window
-        # initially set to 2
-        self.packetcount = CONGESTION_WINDOW
-
+        
         # receiving window sent by reciever to sender; helps sender keep track of how much to send
         self.recvwindow = MAX_WINDOW
 
-        #number of packets sent
+        #number of packets sent by sender in its congestion / flow control window
         self.pack_sent=0
 
-        #number of ACKS received by sender
+        #number of ACKS received by sender from previous window
         self.ack_recv=0
 
         #a counter to know how much the congestion window should be after RTTS
         self.iterate=2
 
-        #once all ACKS are received, we can proceed to send the next set of packets
+        #once all ACKS from the previous window are received, we can proceed to send the next set of packets in the next window
         self.can_send = True
         
+        #lock to allow only one thread at a time to udpate self.ack_rec
         self.ack_lock = threading.Lock()
-
-        self.send_lock = threading.Lock()
         
+        #lock to allow only one thread at a time to update self.can_send
+        self.send_lock = threading.Lock()
+      
         self.buffer_size=MAX_WINDOW
 
         self.buffer=""
-
-        self.prev_ack=0
 
 
         return
@@ -670,28 +666,42 @@ class socket:
                     if self.can_send == True:
                         # try to send packets in congestion window, but check if the receiving window is smaller before sending
                         # set the counter of how many packets we sent in this window to 0
+                        
+                        #reset the number of ack received
                         self.ack_lock.acquire()
                         self.ack_recv=0
+                        self.ack_lock.release()
+                        #resent the number of packets sent in this window
                         self.pack_sent=0
 
-                        #determine # ofpackets to send          
+                        #determine # ofpackets to send
+                        # count is the number of packets to send
                         count=0
+                        # iter_bytes is the total number of byters we are sending in this window
+                        # iter_bytes is used make sure we dont send packets sizes that exceed the window size
                         iter_bytes=0
+                        # loop to see if the congestion control window, or the flow control window is the minimum
                         for i in range(self.iterate):
+                            # if there are packets left to send AND if there is room for more in flow control window
                             if(resend_start_index+i<total_packets and iter_bytes<self.recvwindow):
+                                # if the packet to send is larger than the flow control window, then split the packet by how much the window wants
                                 if(iter_bytes + len(self.data_packets[resend_start_index+i]) > self.recvwindow):
                                     self.split(resend_start_index+i, self.recvwindow - iter_bytes)
+                                    #increment total packets because splitting the packet adds an extra packet
                                     total_packets+=1
+                                #add the packet that we can send into the total number of bytes we are sending in this window
                                 iter_bytes+=len(self.data_packets[resend_start_index+i])
+                                #we can send this packet later
                                 count+=1
-                        self.ack_lock.release()
                         print("packs to send:" + str(count))
+                        #send the packets that fit in the congestion control or flow control window, increment the packets sent and its index
                         for i in range(count):
                             self.socket.sendto(self.data_packets[resend_start_index], self.send_address)
                             self.pack_sent+=1
                             print("pack size:" +  str(len(self.data_packets[resend_start_index])))
                             resend_start_index+=1
                         #wait for all ACKS for the packets just sent to be received before sending packets in next window
+                        #all packets have been sent so now we should not send anymore until these packets receive their ACKS
                         self.send_lock.acquire()
                         self.can_send=False
                         self.send_lock.release()
@@ -707,20 +717,33 @@ class socket:
         # waits for recv thread to finish before returning from the method
         recv_ack_thread.join()
 
+        #send a packet to the receiver to let them know there are no more bytes to be sent
+        fin_packet = self.createPacket(flags=SOCK352_FIN,
+                                               sequence_no=self.sequence_no+1,
+                                               ack_no=self.ack_no+1,
+                                               window=MAX_WINDOW)
+        self.socket.sendto(fin_packet, self.send_address)
         print("Finished transmitting data packets")
         return len(buffer)
 
 
-      
+    # this method take a packet that is too large to fit in the flow control window, and splits it into two.
+    # it splits it into how much more room the window has, and whatever is left
+    # it takes the index of the packet to be split and the remaining window size
     def split(self,index, val):
+      # unpack header, retrieve ACKS and SEQS
         packet= self.data_packets[index]
         packet_header = packet[:PACKET_HEADER_LENGTH]
         packet_data = packet[PACKET_HEADER_LENGTH:]
         packet_header = struct.unpack(PACKET_HEADER_FORMAT, packet_header)
         seq_no=packet_header[PACKET_SEQUENCE_NO_INDEX]
         ack_no=packet_header[PACKET_ACK_NO_INDEX]
+        #slice the packet_data
+        #The total length of the packet should be the remaining window size which includes the header and data length
         send1=packet_data[:val-40]
         send2=packet_data[val-40:]
+        
+        #create the new packets. the 2nd packet should have an ACK and SEQ NO 1 more than the 1st
         packet1 = self.createPacket(flags=0x0,
                                            sequence_no=seq_no,
                                            ack_no=ack_no,
@@ -730,10 +753,12 @@ class socket:
                                            ack_no=ack_no+1,
                                            payload_len=len(send2))
 
+        # insert the proper data packets in the right spot and remove the previous data packet that was too big
         self.data_packets.insert(index,packet2+send2)
         self.data_packets.insert(index,packet1+send1)
         self.data_packets.pop(index+2)
 
+        # update the rest of the data packets remaining and increase their ACK and SEQ NOs by 1
         for i in range(index+2,len(self.data_packets)):
             pack= self.data_packets[i]
             pack_header = pack[:PACKET_HEADER_LENGTH]
@@ -760,21 +785,21 @@ class socket:
                 #receving window set by the reciever when ack is sent back to sender
                 self.recvwindow = new_packet[window_index]
                 #print("in client, recv window is : "  + str(self.recvwindow))
-
+            
+                # if the window received is 0, then wait and do not send
+                if(self.recvwindow == 0):
+                    self.send_lock.acquire()
+                    self.can_send = False
+                    self.send_lock.release()
+                    
+                # if the window recieved is not 320000, then increment the ACK received
+                # this is because if the ACK received is 32000, then the ACK was just sent to update the buffer, not because a packet was actually sent
                 if(self.recvwindow !=32000):
                     self.ack_lock.acquire()
                     self.ack_recv+=1
                     self.ack_lock.release()
-                else:
-                    print("ACK32000: " + str(new_packet[PACKET_ACK_NO_INDEX]))
-                    print("SEQ32000: " + str(new_packet[PACKET_SEQUENCE_NO_INDEX]))
-                if(self.recvwindow == 0):
-                    print("ACK0: " + str(new_packet[PACKET_ACK_NO_INDEX]))
-                    print("SEQ0: " + str(new_packet[PACKET_SEQUENCE_NO_INDEX]))
-                    self.send_lock.acquire()
-                    self.can_send = False
-                    self.send_lock.release()
-                # if we received all the packets sent, then multiply congestion window by 2. Now we can send the next set of packets
+                    
+                # if we received all the packets sent and there is enough window size , then multiply congestion window by 2. Now we can send the next set of packets
                 if(self.ack_recv == self.pack_sent and self.can_send == False and self.recvwindow>0):
                     #print(self.ack_recv, self.pack_sent)
                     self.iterate*=2
