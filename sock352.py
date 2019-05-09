@@ -212,6 +212,12 @@ class socket:
         self.ack_lock = threading.Lock()
 
         self.send_lock = threading.Lock()
+        
+        self.buffer_size=MAX_WINDOW
+
+        self.buffer=""
+
+        self.prev_ack=0
 
 
         return
